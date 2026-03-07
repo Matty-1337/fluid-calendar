@@ -1,0 +1,15 @@
+node_modules/
+.next/
+dist/
+build/
+coverage/
+playwright-report/
+test-results/
+*.lock
+package-lock.json
+data/
+logs/
+.env
+.env.local
+.env.production
+.cursor/ANALYSIS.md

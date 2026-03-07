@@ -1,0 +1,94 @@
+---
+description: Database schema, migration, and Prisma patterns
+globs: prisma/**,src/lib/prisma.ts,src/lib/calendar-db.ts,src/lib/db/**
+alwaysApply: false
+---
+
+## Prisma Client Access
+```typescript
+// CORRECT:
+import { Task, Project } from "@prisma/client";  // Types only
+import { prisma } from "@/lib/prisma";            // Client instance
+
+// WRONG - NEVER DO THIS:
+import { PrismaClient } from "@prisma/client";
+const prisma = new PrismaClient();
+```
+
+## Creating Migrations
+```bash
+npx prisma migrate dev --name descriptive_snake_case
+npx prisma generate  # Always run after migration
+```
+- Names: lowercase snake_case (e.g., `add_task_sync_fields`, `create_password_reset`)
+- Current count: 35 migrations (latest: `20250425231923_lifetime_subscription`)
+
+## Schema Conventions
+
+### IDs
+- Most models: `String @id @default(cuid())`
+- CalendarFeed/CalendarEvent: `String @id @default(uuid())`
+
+### Timestamps
+Always include on new models:
+```prisma
+createdAt DateTime @default(now())
+updatedAt DateTime @updatedAt
+```
+
+### User Relationship
+Most models have a userId foreign key:
+```prisma
+userId String?
+user   User?  @relation(fields: [userId], references: [id])
+@@index([userId])
+```
+
+### Indexes
+Add `@@index` for:
+- All foreign keys (userId, feedId, projectId, providerId, etc.)
+- Status/type fields used in filtering (`@@index([status])`)
+- Date fields used in range queries (`@@index([dueDate])`, `@@index([scheduledStart, scheduledEnd])`)
+- External ID fields (`@@index([externalTaskId, source])`)
+- Composite indexes for unique lookups (`@@unique([userId, provider, email])`)
+
+### JSON String Pattern
+Arrays are stored as String with JSON default, NOT native JSON:
+```prisma
+workDays          String @default("[]")    // JSON string of numbers 0-6
+selectedCalendars String @default("[]")    // JSON string of calendar IDs
+workingHoursDays  String @default("[1,2,3,4,5]")
+```
+Parse with `JSON.parse()` in application code.
+
+### Enums
+Only two Prisma enums exist; others use String with comments:
+```prisma
+// Prisma enums (use directly):
+enum JobStatus { PENDING ACTIVE COMPLETED FAILED DELAYED PAUSED }
+enum SubscriptionPlan { FREE LIFETIME }
+enum SubscriptionStatus { ACTIVE PAYMENT_PENDING PAYMENT_FAILED }
+
+// String-based enums (documented in comments):
+status String // enum: 'todo', 'in_progress', 'completed'
+type   String // "LOCAL", "GOOGLE", "OUTLOOK", "CALDAV"
+role   String @default("user") // "user", "admin"
+```
+
+### Cascade Deletes
+- User settings: `onDelete: Cascade` (delete settings when user deleted)
+- Account connections: `onDelete: Cascade` or `onDelete: SetNull` depending on criticality
+- CalendarEvent -> CalendarFeed: `onDelete: Cascade`
+
+## Calendar DB Operations
+All calendar-related database operations go through `@/lib/calendar-db.ts`, not raw Prisma:
+```typescript
+import { createEvent, updateEvent, deleteEvent, getEvents } from "@/lib/calendar-db";
+```
+
+## Key Models Reference
+- **Task**: 30+ fields, 15 indexes -- most complex model
+- **CalendarEvent**: Self-referencing (masterEvent/instances for recurring)
+- **AutoScheduleSettings**: Work hours, energy mappings, buffer config
+- **SystemSettings**: Singleton for OAuth creds, log config, feature flags
+- **TaskProvider/TaskListMapping/TaskChange**: Task sync system

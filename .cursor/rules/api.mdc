@@ -1,0 +1,92 @@
+---
+description: API route handler patterns and conventions
+globs: src/app/api/**
+alwaysApply: false
+---
+
+## Route Handler Template
+```typescript
+import { NextRequest, NextResponse } from "next/server";
+
+import { authenticateRequest } from "@/lib/auth/api-auth";
+import { logger } from "@/lib/logger";
+import { prisma } from "@/lib/prisma";
+
+const LOG_SOURCE = "descriptive-route-name";
+
+export async function GET(request: NextRequest) {
+  try {
+    const auth = await authenticateRequest(request, LOG_SOURCE);
+    if ("response" in auth) {
+      return auth.response;
+    }
+    const userId = auth.userId;
+
+    // Business logic using prisma with userId filter
+    const data = await prisma.model.findMany({ where: { userId } });
+
+    return NextResponse.json(data);
+  } catch (error) {
+    logger.error(
+      "Failed to fetch data:",
+      { error: error instanceof Error ? error.message : String(error) },
+      LOG_SOURCE
+    );
+    return new NextResponse("Internal Server Error", { status: 500 });
+  }
+}
+```
+
+## Authentication
+- Standard routes: `authenticateRequest(request, LOG_SOURCE)` returns `{ userId }` or `{ response: 401 }`
+- Admin routes: `requireAdmin(request)` returns `null` (success) or error response (403)
+```typescript
+import { requireAdmin } from "@/lib/auth/api-auth";
+
+export async function GET(request: NextRequest) {
+  const authResponse = await requireAdmin(request);
+  if (authResponse) return authResponse;
+  // ... admin-only logic
+}
+```
+
+## Next.js 15 Async Params
+```typescript
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;  // params is a Promise in Next.js 15
+  // ...
+}
+```
+
+## Response Patterns
+- Success: `NextResponse.json(data)` or `NextResponse.json(data, { status: 201 })`
+- Error: `new NextResponse("Error message", { status: 400|404|500 })`
+- Some routes return: `NextResponse.json({ error: "message" }, { status: 400 })`
+
+## Logging
+Every route file MUST define `LOG_SOURCE` at the top:
+```typescript
+const LOG_SOURCE = "tasks-route";
+```
+Use `logger.error()`, `logger.info()`, `logger.warn()`, `logger.debug()` with this pattern:
+```typescript
+logger.error("Message", { key: value, error: error instanceof Error ? error.message : String(error) }, LOG_SOURCE);
+```
+
+## Task Change Tracking
+When creating/updating/deleting tasks in mapped projects, track changes for sync:
+```typescript
+import { ChangeType, TaskChangeTracker } from "@/lib/task-sync/task-change-tracker";
+
+const changeTracker = new TaskChangeTracker();
+await changeTracker.trackChange(task.id, "CREATE" as ChangeType, userId, { task }, undefined, mappingId);
+```
+
+## Database Access
+- ALWAYS use `import { prisma } from "@/lib/prisma"`
+- NEVER create `new PrismaClient()`
+- For calendar operations: use `@/lib/calendar-db.ts` helpers
+- For date operations: use `@/lib/date-utils` (e.g., `newDate()` not `new Date()`)

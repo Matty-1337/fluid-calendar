@@ -1,0 +1,96 @@
+---
+description: Frontend React/Next.js component patterns and conventions
+globs: src/components/**,src/app/**/*.tsx,src/hooks/**,src/store/**
+alwaysApply: false
+---
+
+## Component Structure
+```typescript
+// Types/Interfaces at top
+interface Props {
+  // ...
+}
+
+// Named export (not default)
+export function ComponentName({ prop1, prop2 }: Props) {
+  // 1. Hooks (useAdmin, useCommands, store hooks)
+  // 2. State (useState, useRef)
+  // 3. Effects (useEffect)
+  // 4. Helper functions
+  // 5. Render
+}
+```
+
+## Import Ordering (enforced by Prettier)
+1. React/Next.js (`import React`, `import { useCallback }`, `import dynamic from "next/dynamic"`)
+2. Third-party (`zustand`, `date-fns`, `react-icons`, `@dnd-kit`)
+3. Internal components (`@/components/...`)
+4. Types (`@/types/...`)
+5. Utilities/hooks/stores (`@/lib/...`, `@/hooks/...`, `@/store/...`)
+
+## Zustand Store Pattern
+```typescript
+import { create } from "zustand";
+import { persist } from "zustand/middleware";
+
+interface StoreState {
+  items: Item[];
+  setItems: (items: Item[]) => void;
+  fetchItems: () => Promise<void>;
+}
+
+export const useItemStore = create<StoreState>((set) => ({
+  items: [],
+  setItems: (items) => set({ items }),
+  fetchItems: async () => {
+    const res = await fetch("/api/items");
+    const data = await res.json();
+    set({ items: data });
+  },
+}));
+```
+- Stores live in `src/store/`
+- Use `persist` middleware for stores that need localStorage
+- Keep stores small and focused (atomic pattern)
+
+## SAAS/OSS Dynamic Import Pattern
+```typescript
+import dynamic from "next/dynamic";
+
+const SettingsContent = dynamic(
+  () => import(`./SettingsContent${process.env.NEXT_PUBLIC_ENABLE_SAAS_FEATURES === "true" ? ".saas" : ".open"}`),
+  { ssr: false }
+);
+```
+- `.saas.tsx` for SAAS-only components
+- `.open.tsx` for OSS-only components
+- No extension for shared components
+
+## UI Components
+- Use Shadcn: `npx shadcn@latest add <component>`
+- Icons: `react-icons` (import from `react-icons/hi`, `react-icons/fi`, etc.)
+- Toast notifications: `sonner`
+- Command palette: `cmdk` -- consider adding new features to `src/lib/commands/`
+- JSX text: use `&apos;` and `&quot;` instead of literal quotes
+
+## Admin Access
+```tsx
+// In pages:
+const { isAdmin } = useAdmin();
+if (!isAdmin) return <AccessDeniedMessage message="Admin access required" />;
+
+// In components:
+<AdminOnly fallback={<AccessDeniedMessage />}>
+  {/* Admin content */}
+</AdminOnly>
+```
+
+## FullCalendar Integration
+- Calendar component wraps FullCalendar with plugins: dayGridPlugin, timeGridPlugin, multiMonthPlugin, interactionPlugin
+- Events come from `useCalendarStore`
+- Event handlers dispatch to store actions
+
+## Drag and Drop
+- Uses `@dnd-kit/core` and `@dnd-kit/sortable`
+- DndProvider wraps draggable areas
+- Task reordering and calendar event drag supported
