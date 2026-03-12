@@ -102,14 +102,17 @@ export async function scheduleAllTasksForUser(
   try {
     logger.info("Starting task scheduling for user", { userId }, LOG_SOURCE);
 
-    // If settings are not provided, fetch them from the database
-    const userSettings = await prisma.autoScheduleSettings.findUnique({
-      where: { userId },
-    });
+    // Fetch auto-schedule settings and user settings (for timezone) from the database
+    const [autoScheduleSettings, userSettings] = await Promise.all([
+      prisma.autoScheduleSettings.findUnique({ where: { userId } }),
+      prisma.userSettings.findUnique({ where: { userId } }),
+    ]);
 
-    if (!userSettings) {
+    if (!autoScheduleSettings) {
       throw new Error("Auto-schedule settings not found for user");
     }
+
+    const userTimeZone = userSettings?.timeZone ?? "UTC";
 
     // Get all tasks marked for auto-scheduling that are not locked
     const tasksToSchedule = await prisma.task.findMany({
@@ -156,8 +159,11 @@ export async function scheduleAllTasksForUser(
       LOG_SOURCE
     );
 
-    // Initialize scheduling service with settings
-    const schedulingService = new SchedulingService(userSettings);
+    // Initialize scheduling service with settings and user timezone (fixes #161: schedule in user TZ)
+    const schedulingService = new SchedulingService(
+      autoScheduleSettings,
+      userTimeZone
+    );
 
     // Clear existing schedules for non-locked tasks
     await prisma.task.updateMany({

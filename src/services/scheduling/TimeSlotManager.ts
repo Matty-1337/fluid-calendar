@@ -14,9 +14,8 @@ import {
   setMinutes,
   toZonedTime,
 } from "@/lib/date-utils";
+import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
-
-import { useSettingsStore } from "@/store/settings";
 
 import { Conflict, TimeSlot } from "@/types/scheduling";
 
@@ -53,10 +52,18 @@ export class TimeSlotManagerImpl implements TimeSlotManager {
 
   constructor(
     private settings: AutoScheduleSettings,
-    private calendarService: CalendarService
+    private calendarService: CalendarService,
+    timeZoneOverride?: string
   ) {
     this.slotScorer = new SlotScorer(settings);
-    this.timeZone = useSettingsStore.getState().user.timeZone;
+    if (!timeZoneOverride) {
+      logger.warn(
+        "TimeSlotManager created without timezone; defaulting to UTC",
+        {},
+        "TimeSlotManager"
+      );
+    }
+    this.timeZone = timeZoneOverride ?? "UTC";
   }
 
   async updateScheduledTasks(userId: string): Promise<void> {
@@ -256,8 +263,10 @@ export class TimeSlotManagerImpl implements TimeSlotManager {
 
     localCurrentStart = roundDateUp(localCurrentStart);
     localEndDate = roundDateUp(localEndDate);
-    // Generate slots advancing by task duration
+    // Generate slots advancing by task duration (cap prevents runaway allocation)
+    const MAX_SLOTS = 5000;
     while (localCurrentStart < localEndDate) {
+      if (slots.length >= MAX_SLOTS) break;
       const slotEnd = addMinutes(localCurrentStart, duration);
       const slot: TimeSlot = {
         start: newDate(localCurrentStart),

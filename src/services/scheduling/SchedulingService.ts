@@ -2,14 +2,11 @@ import { AutoScheduleSettings, Task } from "@prisma/client";
 
 import { addDays, newDate } from "@/lib/date-utils";
 import { logger } from "@/lib/logger";
-import { prisma } from "@/lib/prisma";
 
-import { useSettingsStore } from "@/store/settings";
-
+import { CalendarService } from "./CalendarService";
 import { CalendarServiceImpl } from "./CalendarServiceImpl";
+import { PrismaTaskWriter, TaskWriter } from "./TaskWriter";
 import { TimeSlotManager, TimeSlotManagerImpl } from "./TimeSlotManager";
-
-// Import the global Prisma instance
 
 const DEFAULT_TASK_DURATION = 30; // Default duration in minutes
 const LOG_SOURCE = "SchedulingService";
@@ -23,13 +20,22 @@ interface PerformanceMetrics {
 }
 
 export class SchedulingService {
-  private calendarService: CalendarServiceImpl;
+  private calendarService: CalendarService;
+  private taskWriter: TaskWriter;
   private settings: AutoScheduleSettings | null;
+  private timeZone: string | null;
   private metrics: PerformanceMetrics[] = [];
 
-  constructor(settings?: AutoScheduleSettings) {
-    this.calendarService = new CalendarServiceImpl();
+  constructor(
+    settings?: AutoScheduleSettings,
+    timeZone?: string,
+    calendarService?: CalendarService,
+    taskWriter?: TaskWriter
+  ) {
+    this.calendarService = calendarService ?? new CalendarServiceImpl();
+    this.taskWriter = taskWriter ?? new PrismaTaskWriter();
     this.settings = settings || null;
+    this.timeZone = timeZone ?? null;
   }
 
   private startMetric(
@@ -93,18 +99,17 @@ export class SchedulingService {
     if (this.settings) {
       settings = this.settings;
     } else {
-      // Fallback to store settings if none provided (for backward compatibility)
-      const storeSettings = useSettingsStore.getState().autoSchedule;
-      settings = {
-        ...storeSettings,
-        id: "store",
-        userId: "store",
-        createdAt: newDate(),
-        updatedAt: newDate(),
-      };
+      throw new Error(
+        "SchedulingService requires AutoScheduleSettings. " +
+          "Pass settings to the constructor."
+      );
     }
 
-    const manager = new TimeSlotManagerImpl(settings, this.calendarService);
+    const manager = new TimeSlotManagerImpl(
+      settings,
+      this.calendarService,
+      this.timeZone ?? undefined
+    );
 
     this.endMetric("getTimeSlotManager", startTime);
     return manager;
@@ -214,14 +219,10 @@ export class SchedulingService {
 
     // Get all tasks (including locked ones) to return
     const finalFetchStart = this.startMetric("fetchFinalTasks");
-    const allTasks = await prisma.task.findMany({
-      where: {
-        id: {
-          in: tasks.map((t) => t.id),
-        },
-        userId,
-      },
-    });
+    const allTasks = await this.taskWriter.fetchTasks(
+      tasks.map((t) => t.id),
+      userId
+    );
     this.endMetric("fetchFinalTasks", finalFetchStart);
 
     this.endMetric("scheduleMultipleTasks", overallStart);
@@ -271,17 +272,16 @@ export class SchedulingService {
         });
 
         // Update the task with the selected slot
-        const updatedTask = await prisma.task.update({
-          where: { id: task.id },
-          data: {
-            scheduledStart: bestSlot.start,
-            scheduledEnd: bestSlot.end,
-            isAutoScheduled: true,
-            duration: task.duration || DEFAULT_TASK_DURATION,
-            scheduleScore: bestSlot.score,
-            userId,
+        const updatedTask = await this.taskWriter.updateScheduledSlot(
+          task.id,
+          {
+            start: bestSlot.start,
+            end: bestSlot.end,
+            score: bestSlot.score,
           },
-        });
+          task.duration || DEFAULT_TASK_DURATION,
+          userId
+        );
 
         // Add this newly scheduled task to the list of conflicts
         // so it won't be available for other tasks
